@@ -5,7 +5,7 @@ from numba import jit
 from matplotlib.animation import FuncAnimation
 import scipy.integrate as spi
 
-v_p = 0.5*c
+v_p = 0.8*c
 beta_p = v_p/c
 gamma_p = np.sqrt(1-beta_p**2)
 B = 1
@@ -19,12 +19,11 @@ t_d = -2*gamma_p**2*ksi_i/c
 C = 1
 n_0 = 5e21 # plasma density in m^-3
 omega_p = n_0*e**2/(m_e*epsilon_0)
-tau = np.linspace(0,1,100)
+gamma_d = gamma_p**2*k_p**2*ksi_i**2/2
 t = np.linspace(t_d/1000,t_d,1000)
 
 def gamma_0(t):
     tau = (t-t_d)/t_d
-    gamma_d = gamma_p**2*k_p**2*ksi_i**2/2
     return gamma_d*(1-tau**2)
 
 def zeta_beta(t):
@@ -37,10 +36,7 @@ def zeta(t):
     return np.array([zeta_beta(t[i])*np.cos(spi.quad(omega_beta,0,t[i])[0] + phiprime) for i in range(len(t))])
 
 
-print(gamma_0(t))
-
 plt.figure()
-
 plt.plot(t,zeta(t))
 plt.xlabel(r'$\tau$')
 plt.ylabel(r'$\zeta(\tau)$')
