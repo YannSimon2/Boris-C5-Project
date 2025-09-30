@@ -19,11 +19,10 @@ t_d = -2*gamma_p**2*ksi_i/c
 C = 1
 n_0 = 5e21 # plasma density in m^-3
 omega_p = n_0*e**2/(m_e*epsilon_0)
-tau = np.linspace(0,1,100)
 t = np.linspace(t_d/1000,t_d,1000)
+tau = (t-t_d)/t_d
 
-def gamma_0(t):
-    tau = (t-t_d)/t_d
+def gamma_0(tau):
     gamma_d = gamma_p**2*k_p**2*ksi_i**2/2
     return gamma_d*(1-tau**2)
 
@@ -33,15 +32,14 @@ def zeta_beta(t):
 def omega_beta(t):
     return omega_p/np.sqrt(2*gamma_0(t))
 
-def zeta(t):
-    return np.array([zeta_beta(t[i])*np.cos(spi.quad(omega_beta,0,t[i])[0] + phiprime) for i in range(len(t))])
+def zeta(tau):
+    return B*np.cos(2*gamma_p*np.arccos(tau) + phi)/(1-tau**2)**(1/4)
 
 
-print(gamma_0(t))
 
 plt.figure()
 
-plt.plot(t,zeta(t))
+plt.plot(tau,zeta(tau))
 plt.xlabel(r'$\tau$')
 plt.ylabel(r'$\zeta(\tau)$')
 plt.grid()
@@ -59,10 +57,10 @@ def init():
     line.set_data([], [])
     return line,
 def update(frame):
-    x = t[:frame]
-    y = zeta(t[:frame])
+    x = tau[:frame]
+    y = zeta(tau[:frame])
     line.set_data(x, y)
     return line,
-ani = FuncAnimation(fig, update, frames=len(t), init_func=init, blit=True, interval=20)
+ani = FuncAnimation(fig, update, frames=len(tau), init_func=init, blit=True, interval=20)
 ani.save('transverse_motion.gif', writer='imagemagick')
 plt.show()
