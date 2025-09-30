@@ -1,0 +1,68 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.constants import c, e, m_e, epsilon_0
+from numba import jit
+from matplotlib.animation import FuncAnimation
+import scipy.integrate as spi
+
+v_p = 0.5*c
+beta_p = v_p/c
+gamma_p = np.sqrt(1-beta_p**2)
+B = 1
+phi = np.pi/2 - 2*gamma_p
+phiprime = np.pi/2
+r_b = 5e-6 # bubble radius in meters
+a_0 = 2  # normalized vector potential
+ksi_i = -0.1*r_b  # initial longitudinal offset in meters
+k_p = 2*np.sqrt(a_0)/r_b
+t_d = -2*gamma_p**2*ksi_i/c
+C = 1
+n_0 = 5e21 # plasma density in m^-3
+omega_p = n_0*e**2/(m_e*epsilon_0)
+tau = np.linspace(0,1,100)
+t = np.linspace(t_d/1000,t_d,1000)
+
+def gamma_0(t):
+    tau = (t-t_d)/t_d
+    gamma_d = gamma_p**2*k_p**2*ksi_i**2/2
+    return gamma_d*(1-tau**2)
+
+def zeta_beta(t):
+    return C*gamma_0(t)**(-1/4)
+
+def omega_beta(t):
+    return omega_p/np.sqrt(2*gamma_0(t))
+
+def zeta(t):
+    return np.array([zeta_beta(t[i])*np.cos(spi.quad(omega_beta,0,t[i])[0] + phiprime) for i in range(len(t))])
+
+
+print(gamma_0(t))
+
+plt.figure()
+
+plt.plot(t,zeta(t))
+plt.xlabel(r'$\tau$')
+plt.ylabel(r'$\zeta(\tau)$')
+plt.grid()
+plt.title('Transverse motion in the wakefield')
+plt.show()
+
+plt.figure()
+fig, ax = plt.subplots()
+line, = ax.plot([], [], lw=2)
+ax.set_xlabel(r'$\tau$')
+ax.set_ylabel(r'$\zeta(\tau)$')
+ax.set_title('Transverse motion in the wakefield')
+ax.grid()
+def init():
+    line.set_data([], [])
+    return line,
+def update(frame):
+    x = t[:frame]
+    y = zeta(t[:frame])
+    line.set_data(x, y)
+    return line,
+ani = FuncAnimation(fig, update, frames=len(t), init_func=init, blit=True, interval=20)
+ani.save('transverse_motion.gif', writer='imagemagick')
+plt.show()
