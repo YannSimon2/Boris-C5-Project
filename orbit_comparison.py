@@ -3,77 +3,6 @@ import matplotlib.gridspec as gridspec
 import numpy as np
 import scipy.constants as const
 
-#------------------------------------ Boris pusher Implementation -----------------------------------------#
-
-def Boris_pusher(r0, v0, t0, tf, dt, E, B, q, m):
-    """
-    Implements the Boris algorithm to advance the position and velocity of a charged particle
-    in given electric and magnetic fields.
-    Args:
-        r0: Initial position (numpy array)
-        v0: Initial velocity (numpy array)
-        t0: Initial time
-        tf: Final time
-        dt: Time step
-        E: Function returning electric field
-        B: Function returning magnetic field
-        q: Particle charge
-        m: Particle mass
-    Returns:
-        L_t: Array of time steps
-        L_r: Array of positions at each time step
-        L_v: Array of velocities at each time step
-    """
-    L_t = np.arange(t0, tf, dt)
-    L_r = np.zeros((np.shape(L_t)[0], 3))
-    L_r[0, :] = r0
-    L_v = np.zeros((np.shape(L_t)[0], 3))
-    L_v[0, :] = v0
-
-    for n in range(1, np.shape(L_t)[0]):
-        rn, vn, tn = L_r[n-1, :], L_v[n-1, :], L_t[n-1]
-        # Half acceleration by E
-        vminus = vn + q / m * E * dt / 2
-
-        # Rotation due to B
-        t = q * dt / (2 * m) * B
-        s = 2 / (1 + np.dot(t, t)) * t
-
-        vprime = vminus + np.cross(vminus, t)
-        vplus = vminus + np.cross(vprime, s)
-
-        # Second half acceleration by E
-        vnp1 = vplus + q / m * E * dt / 2
-        rnp1 = rn + vn * dt
-        L_r[n, :] = rnp1
-        L_v[n, :] = vnp1
-
-    return L_t, L_r, L_v
-
-def analytical_solution(L_t, r0, v0, q, m, B, E):
-    """
-    Analytical solution for the trajectory of a charged particle in uniform, constant, crossed E and B fields (Bz only).
-    Args:
-        L_t: Array of time steps
-        r0: Initial position
-        v0: Initial velocity
-        q: Particle charge
-        m: Particle mass
-        B: Magnetic field vector
-        E: Electric field vector
-    Returns:
-        r_analytical: Array of analytical positions at each time step
-    """
-    omega = np.abs(q) * np.linalg.norm(B) / m
-    E_cross_B = np.cross(E, B) / np.linalg.norm(B)**2
-    r_analytical = []
-    for t in L_t:
-        x_t = r0[0] + (v0[0] - E_cross_B[0]) * np.sin(omega*t) / omega - (v0[1] - E_cross_B[1]) * (1-np.cos(omega*t)) / omega + E_cross_B[0] * t
-        y_t = r0[1] + (v0[1] - E_cross_B[1]) * np.sin(omega*t) / omega + (v0[0] - E_cross_B[0]) * (1-np.cos(omega*t)) / omega + E_cross_B[1] * t
-        z_t = r0[2] + v0[2] * t + q * E[2] / (2 * m) * t**2
-        r_analytical.append(np.array([x_t, y_t, z_t]))
-    return np.array(r_analytical)
-
 #------------------------------------ Plotting functions --------------------------------#
 
 def comparaison(L_t, L_r, L_analytic, save=False):
@@ -162,7 +91,7 @@ def plot_2D(L_x, L_y, save=False):
         save: If True, saves the plot as a PNG file
     """
     plt.figure(num="Plot 2D", figsize=(12, 5))
-    step = 100
+    step = 1
     plt.plot(L_x[step::], L_y[step::], "--", label="Displacement in time")
     plt.xlabel("X-component [m]")
     plt.ylabel("Y-component [m]")
@@ -203,27 +132,6 @@ def plot_energy(L_t, L_v2, m, relativistic = False, save=False):
         plt.savefig("energy.png", dpi=300)
 
     plt.show()
-
-#------------------------------------ Main execution ----------------------------------#
-
-# Physical constants for electron
-q, m = -const.elementary_charge, const.electron_mass
-E, B = np.array([1e-6, 0, 0]), np.array([0, 0, 1e-9])
-
-# Initial conditions and simulation parameters
-t0, tf, dt = 0, 1e-8, 1e-11
-r0 = np.array([0.1, 0.1, 0.1])
-v0 = np.array([1e-2, 0, 0])
-
-# Run Boris pusher and analytical solution
-# L_t, L_r, L_v = Boris_pusher(r0, v0, t0, tf, dt, E, B, q, m)
-# L_analytic = analytical_solution(L_t, r0, v0, q, m, B, E)
-
-# Plot results
-# comparaison(L_t, L_r, L_analytic)
-# plot_3component(L_t, L_r)
-# plot_2D(L_r[:, 0], L_r[:, 1])
-# plot_energy(L_t, np.linalg.norm(L_v, axis=1), m)
 
 #------------------------------------ Relativistic Electron ----------------------------------#
 
@@ -266,108 +174,74 @@ def RelativisticBorisPusher(v_n_minus_half, E, B, dt, q, m, c=const.c):
     
     return v_n_plus_half
 
-def velocity_to_momentum(v, m, c=const.c):
-    """
-    Convert velocity to momentum for a single relativistic particle.
-    Uses the classical expression: gamma = 1 / sqrt(1 - (v/c)²)
-    Args:
-        v: Velocity vector (3D numpy array)
-        m: Particle mass
-        c: Speed of light
-    Returns:
-        p: Momentum vector
-    """
-    v_speed = np.linalg.norm(v)
-    gamma = 1.0 / np.sqrt(1.0 - (v_speed / c)**2)
-    p = gamma * m * v
-    return p
-
-def momentum_to_velocity(p, m, c=const.c):
-    """
-    Convert momentum to velocity for a single relativistic particle.
-    Uses the classical expression: gamma = 1 / sqrt(1 - (v/c)²)
-    Args:
-        p: Momentum vector (3D numpy array)
-        m: Particle mass
-        c: Speed of light
-    Returns:
-        v: Velocity vector
-    """
-    # For relativistic particles: p = gamma * m * v
-    # We need to solve: |p| = gamma * m * |v| where gamma = 1/sqrt(1-(v/c)²)
-    # This gives: |v| = |p| / (m * sqrt(1 + (|p|/(mc))²))
-    p_magnitude = np.linalg.norm(p)
-    v_magnitude = p_magnitude / (m * np.sqrt(1.0 + (p_magnitude / (m * c))**2))
-    
-    # Direction is the same as momentum
-    if p_magnitude > 0:
-        v = (v_magnitude / p_magnitude) * p
-    else:
-        v = np.zeros(3)
-    
-    return v
-
 def relativistic_analytical_solution(L_t, r0, v0, q, m, B, E, c=const.c):
     """
-    Analytical solution for the trajectory of a relativistic charged particle in uniform, constant, crossed E and B fields (Bz only).
-    Uses the classical expression: gamma = 1 / sqrt(1 - (v/c)²)
-    Args:
-        L_t: Array of time steps
-        r0: Initial position
-        v0: Initial velocity
-        q: Particle charge
-        m: Particle mass
-        B: Magnetic field vector
-        E: Electric field vector
-        c: Speed of light
-    Returns:
-        r_analytical: Array of analytical positions at each time step
+    Solution analytique pour la vitesse d'une particule chargée relativiste dans des champs E et B constants (Bz uniquement).
+    Retourne un array de vitesses à chaque pas de temps.
     """
     if np.allclose(E, np.array([0.0, 0.0, 0.0])):
-        # Calculate relativistic cyclotron frequency
+        # Cas sans champ électrique : mouvement cyclotron relativiste
         v0_speed = np.linalg.norm(v0)
         gamma0 = 1.0 / np.sqrt(1.0 - (v0_speed / c)**2)
-        omega = np.abs(q) * np.linalg.norm(B) / (gamma0 * m)  # Relativistic cyclotron frequency
-        
-        r_analytical = []
+        omega = np.abs(q) * np.linalg.norm(B) / (gamma0 * m)
+        v_analytical = []
+        r_analytical = [r0]
         for t in L_t:
-            x_t = r0[0] + (v0[0]) * np.sin(omega*t) / omega - (v0[1]) * (1-np.cos(omega*t)) / omega
-            y_t = r0[1] + (v0[1]) * np.sin(omega*t) / omega + (v0[0]) * (1-np.cos(omega*t)) / omega
-            z_t = r0[2] + v0[2] * t
-            r_analytical.append(np.array([x_t, y_t, z_t]))
+            vx_t = v0[0] * np.cos(omega*t) - v0[1] * np.sin(omega*t)
+            vy_t = v0[1] * np.cos(omega*t) + v0[0] * np.sin(omega*t)
+            vz_t = v0[2]
+            v_analytical.append(np.array([vx_t, vy_t, vz_t]))
+        v_analytical = np.array(v_analytical)
+        for i in range(1,np.shape(L_t)[0]):
+            r_analytical.append(r_analytical[i-1] + v_analytical[i-1]*dt)
+        r_analytical = np.array(r_analytical)
     else:
-        # For crossed E and B fields with relativistic effects
+        # Cas croisé E et B relativiste dans le cas où E est selon x et B selon z
         if np.linalg.norm(E) <= c * np.linalg.norm(B):
             u = np.cross(E, B) / np.linalg.norm(B)**2
             E_prime = np.array([0, 0, 0])
             B_prime = B * np.sqrt(1 - (np.linalg.norm(u)/c)**2)
+
         else:
             u = np.cross(E, B) / np.linalg.norm(E)**2 * c**2
             E_prime = E * np.sqrt(1 - (np.linalg.norm(u)/c)**2)
             B_prime = np.array([0, 0, 0])
-        
-        v0_speed = np.linalg.norm(v0)
-        gamma0 = 1.0 / np.sqrt(1.0 - (v0_speed / c)**2)
-        omega = np.abs(q) * np.linalg.norm(B_prime) / (gamma0 * m)
-        
+
+        gamma = 1.0 / np.sqrt(1.0 - (np.linalg.norm(u)/c)**2)
+        omega = np.abs(q) * np.linalg.norm(B_prime) / (gamma * m)
+        L_tprime = [L_t[0]]
+        for i in range(1, np.shape(L_t)[0]):
+            L_tprime.append(gamma * (L_t[i] - L_t[i-1])+L_tprime[i-1]) # Transformation de Lorentz du temps
+        L_tprime = np.array(L_tprime)
+        # Dans le référentiel primé, le mouvement est un cyclotron classique avec les champs primés et un drift en plus
+        v_analytical_prime = []
+        r_analytical_prime = [r0]
+        for i, t in enumerate(L_tprime):
+            vx_t = (v0[0] - u[0]) * np.cos(omega*t) - (v0[1] - u[1]) * np.sin(omega*t) + u[0]
+            vy_t = (v0[1] - u[1]) * np.cos(omega*t) + (v0[0] - u[0]) * np.sin(omega*t) + u[1]
+            vz_t = v0[2] + q * E_prime[2] / m * t
+            v_analytical_prime.append(np.array([vx_t, vy_t, vz_t]))
+            if i > 0:
+                r_analytical_prime.append(r_analytical_prime[i-1] + v_analytical_prime[i-1]*dt)
+        # Transformation inverse de Lorentz pour obtenir les positions dans le référentiel initial
+        r_analytical_prime = np.array(r_analytical_prime)
         r_analytical = []
-        for t in L_t:
-            x_t = r0[0] + (v0[0] - u[0]) * np.sin(omega*t) / omega - (v0[1] - u[1]) * (1-np.cos(omega*t)) / omega + u[0] * t
-            y_t = r0[1] + (v0[1] - u[1]) * np.sin(omega*t) / omega + (v0[0] - u[0]) * (1-np.cos(omega*t)) / omega + u[1] * t
-            z_t = r0[2] + v0[2] * t + q * E_prime[2] / (2 * gamma0 * m) * t**2
-            r_analytical.append(np.array([x_t, y_t, z_t]))
-        # Transform back to original frame
-        r_analytical = [np.array([x + u[0]*t, y + u[1]*t, z + u[2]*t]) for (x,y,z), t in zip(r_analytical, L_t)]
-    
-    return np.array(r_analytical)
+        for i in range(np.shape(r_analytical_prime)[0]):
+            x = gamma * (r_analytical_prime[i][0] + u[0]*L_tprime[i])
+            y = gamma * (r_analytical_prime[i][1] + u[1]*L_tprime[i])
+            z = r_analytical_prime[i][2]
+            r_analytical.append(np.array([x, y, z]))
+        r_analytical = np.array(r_analytical)
+
+    return r_analytical
 
 # Initial conditions and simulation parameters for relativistic case
-t0, tf, dt = 0, 1e-8, 1e-11
-r0 = np.array([0.1, 0.1, 0.1])
-v0 = np.array([0.0, 0.0, 0.9 * const.c])  # Initial velocity corresponding to high energy (90% speed of light)
+t0, tf, dt = 0, 1e-6, 1e-10
+r0 = np.array([1e-6, 1e-6, 1e-6])
+v0 = np.array([1e-6 * const.c, 0.0, 0.0])  # Initial velocity corresponding to high energy (90% speed of light)
 q, m = -const.elementary_charge, const.electron_mass
-E_field = np.array([1e-6, 0.0, 0.0])  # No electric field
-B_field = np.array([0.0, 0.0, 1e-8])    # Magnetic field in z direction
+E_field = np.array([1e-4, 0.0, 0.0])  # No electric field
+B_field = np.array([0.0, 0.0, 1e-6])    # Magnetic field in z direction
 
 # Run Relativistic Boris pusher with leapfrog integration
 L_t = np.arange(t0, tf, dt)
@@ -389,9 +263,11 @@ for n in range(1, np.shape(L_t)[0]):
     
     # Store velocity at integer time step (interpolated)
     L_v[n, :] = v_half
+    L_r[n, :] = L_r[n-1, :] + v_half * dt
 
-L_analytic = relativistic_analytical_solution(L_t, r0, v0, q, m, B_field, E_field, const.c)
+L_r_analytic, L_v_analytic = relativistic_analytical_solution(L_t, r0, v0, q, m, B_field, E_field, const.c)
 
 # Plot results for relativistic case
-comparaison(L_t, L_r, L_analytic)
+comparaison(L_t, L_r, L_r_analytic)
+# plot_2D(L_r[:, 0], L_r[:, 1])
 plot_energy(L_t, np.linalg.norm(L_v, axis=1), m, relativistic=True)
