@@ -22,7 +22,7 @@ C = 1
 n_0 = 5e24 # plasma density in m^-3
 omega_p = np.sqrt(n_0*(e**2)/(m_e*epsilon_0))
 gamma_d = (gamma_p**2)*(k_p**2)*(ksi_i**2)/2
-t = np.linspace(-t_d,t_d,1000)
+t = np.linspace(t_d/1000,t_d/2,1000)
 
 def gamma_0(t):
     tau = (t-t_d)/t_d
@@ -36,8 +36,8 @@ def omega_beta(t):
 
 def zeta(t):
     return np.array([zeta_beta(t[i])*np.cos(spi.quad(omega_beta,0,t[i])[0] + phiprime) for i in range(len(t))])
-    #return np.array([zeta_beta(t[i])*np.cos(omega_beta(t[i])*t[i]) + phiprime for i in range(len(t))])
-
+def zeta_y(t):
+    return np.array([zeta_beta(t[i])*np.cos(spi.quad(omega_beta,0,t[i])[0] + phiprime+np.pi/2) for i in range(len(t))])
 # Plotting
 plt.figure(figsize=(12, 5))
 
@@ -56,4 +56,62 @@ plt.grid()
 plt.title('Transverse motion in the wakefield')
 
 plt.tight_layout()
+plt.show(block=True)
+
+# 3D trajectory plot
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection='3d')
+
+# Calculate z position (assuming initial z=0 and integrating acceleration)
+z = np.zeros_like(t)
+dt = t[1] - t[0]
+v_z = 0  # initial velocity in z direction
+for i in range(1, len(t)):
+    # Integrate acceleration to get velocity, then position
+    v_z += gamma_0(t[i]) * dt
+    z[i] = z[i-1] + v_z * dt
+
+zeta_vals = zeta(t)
+
+zeta_y_vals = zeta_y(t)
+# Plot 3D trajectory
+ax.plot(zeta_vals, zeta_y_vals, z, 'b-', linewidth=2)
+ax.scatter(zeta_vals[0], zeta_y_vals[0], z[0], color='green', s=100, label='Start')
+ax.scatter(zeta_vals[-1], zeta_y_vals[-1], z[-1], color='red', s=100, label='End')
+
+ax.set_xlabel(r'$x = \zeta(t)$')
+ax.set_ylabel(r'$y = \zeta(t)$')
+ax.set_zlabel(r'$z$ (from $\gamma_0$ acceleration)')
+ax.set_title('3D Particle Trajectory')
+ax.legend()
+plt.show(block=True)
+
+# Animated 3D trajectory
+fig_anim = plt.figure(figsize=(10, 8))
+ax_anim = fig_anim.add_subplot(111, projection='3d')
+
+# Set up the plot limits
+ax_anim.set_xlim([min(zeta_vals), max(zeta_vals)])
+ax_anim.set_ylim([min(zeta_y_vals), max(zeta_y_vals)])
+ax_anim.set_zlim([min(z), max(z)])
+ax_anim.set_xlabel(r'$x = \zeta(t)$')
+ax_anim.set_ylabel(r'$y = \zeta(t)$')
+ax_anim.set_zlabel(r'$z$ (from $\gamma_0$ acceleration)')
+ax_anim.set_title('Animated 3D Particle Trajectory')
+
+# Initialize empty line objects
+line, = ax_anim.plot([], [], [], 'b-', linewidth=2)
+point, = ax_anim.plot([], [], [], 'ro', markersize=8)
+
+def animate(frame):
+    # Update trajectory up to current frame
+    line.set_data_3d(zeta_vals[:frame+1], zeta_y_vals[:frame+1], z[:frame+1])
+    # Update current position point
+    if frame < len(t):
+        point.set_data_3d([zeta_vals[frame]], [zeta_y_vals[frame]], [z[frame]])
+    return line, point
+
+# Create animation
+anim = FuncAnimation(fig_anim, animate, frames=len(t), interval=10, blit=True, repeat=True)
+
 plt.show(block=True)
