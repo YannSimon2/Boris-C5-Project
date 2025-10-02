@@ -1,4 +1,6 @@
 import numpy as np
+import matplotlib
+matplotlib.use('TkAgg')  # Set backend for plot display
 import matplotlib.pyplot as plt
 from scipy.constants import c, e, m_e, epsilon_0
 from numba import jit
@@ -7,20 +9,20 @@ import scipy.integrate as spi
 
 v_p = 0.8*c
 beta_p = v_p/c
-gamma_p = np.sqrt(1-beta_p**2)
+gamma_p = 1/np.sqrt(1-beta_p**2)  # Fixed gamma calculation
 B = 1
 phi = np.pi/2 - 2*gamma_p
 phiprime = np.pi/2
-r_b = 5e-6 # bubble radius in meters
+r_b = 200e-6 # bubble radius in meters
 a_0 = 2  # normalized vector potential
-ksi_i = -0.1*r_b  # initial longitudinal offset in meters
+ksi_i = -r_b  # initial longitudinal offset in meters
 k_p = 2*np.sqrt(a_0)/r_b
-t_d = -2*gamma_p**2*ksi_i/c
+t_d = -2*gamma_p**2*ksi_i/c 
 C = 1
-n_0 = 5e21 # plasma density in m^-3
-omega_p = n_0*e**2/(m_e*epsilon_0)
-gamma_d = gamma_p**2*k_p**2*ksi_i**2/2
-t = np.linspace(t_d/1000,t_d,1000)
+n_0 = 5e24 # plasma density in m^-3
+omega_p = np.sqrt(n_0*(e**2)/(m_e*epsilon_0))
+gamma_d = (gamma_p**2)*(k_p**2)*(ksi_i**2)/2
+t = np.linspace(-t_d,t_d,1000)
 
 def gamma_0(t):
     tau = (t-t_d)/t_d
@@ -34,31 +36,24 @@ def omega_beta(t):
 
 def zeta(t):
     return np.array([zeta_beta(t[i])*np.cos(spi.quad(omega_beta,0,t[i])[0] + phiprime) for i in range(len(t))])
+    #return np.array([zeta_beta(t[i])*np.cos(omega_beta(t[i])*t[i]) + phiprime for i in range(len(t))])
 
+# Plotting
+plt.figure(figsize=(12, 5))
 
-plt.figure()
-plt.plot(t,zeta(t))
-plt.xlabel(r'$\tau$')
-plt.ylabel(r'$\zeta(\tau)$')
+plt.subplot(1, 2, 1)
+plt.plot(t, gamma_0(t))
+plt.xlabel(r'$t$ (s)')
+plt.ylabel(r'$\gamma_0(t)$')
+plt.grid()
+plt.title('Gamma_0 as a function of time')
+
+plt.subplot(1, 2, 2)
+plt.plot(t, zeta(t))
+plt.xlabel(r'$t$')
+plt.ylabel(r'$\zeta(t)$')
 plt.grid()
 plt.title('Transverse motion in the wakefield')
-plt.show()
 
-plt.figure()
-fig, ax = plt.subplots()
-line, = ax.plot([], [], lw=2)
-ax.set_xlabel(r'$\tau$')
-ax.set_ylabel(r'$\zeta(\tau)$')
-ax.set_title('Transverse motion in the wakefield')
-ax.grid()
-def init():
-    line.set_data([], [])
-    return line,
-def update(frame):
-    x = t[:frame]
-    y = zeta(t[:frame])
-    line.set_data(x, y)
-    return line,
-ani = FuncAnimation(fig, update, frames=len(t), init_func=init, blit=True, interval=20)
-ani.save('transverse_motion.gif', writer='imagemagick')
-plt.show()
+plt.tight_layout()
+plt.show(block=True)
