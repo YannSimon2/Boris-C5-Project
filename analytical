@@ -25,7 +25,8 @@ a_0 = 2                                       # Normalized vector potential (las
 ksi_i = -r_b                                  # Initial longitudinal offset in meters
 k_p = 2*np.sqrt(a_0)/r_b                      # Plasma wavenumber
 t_d = -2*gamma_p**2*ksi_i/c                   # Dephasing time scale
-C = 1                                         # Amplitude constant
+
+
 
 # Plasma parameters
 n_0 = 5e24                                    # Plasma density in m^-3 (very high density)
@@ -33,7 +34,8 @@ omega_p = np.sqrt(n_0*(e**2)/(m_e*epsilon_0)) # Plasma frequency
 gamma_d = (gamma_p**2)*(k_p**2)*(ksi_i**2)/2  # Energy parameter
 
 # Time array for simulation
-t = np.linspace(t_d/1000,2*t_d,1000)         # Time from small fraction to half dephasing time
+t_ini = t_d/1000                            # Start time (small fraction of dephasing time)
+t = np.linspace(t_ini,t_d/2,1000)         # Time from small fraction to half dephasing time
 
 # === Function Definitions ===
 
@@ -44,6 +46,9 @@ def gamma_0(t):
     """
     tau = (t-t_d)/t_d                         # Normalized time parameter
     return gamma_d*(1-tau**2)                 # Parabolic energy profile
+
+vz_ini = c*np.sqrt(1-1/(1000*gamma_p**2))  # Initial longitudinal velocity
+C = -np.sqrt(2)*gamma_0(t_ini)**(3/4)*(vz_ini-v_p)/omega_p                                        # Amplitude constant
 
 def zeta_beta(t):
     """
@@ -149,6 +154,11 @@ ax_anim.set_title('Animated 3D Particle Trajectory in Plasma Wakefield')
 line, = ax_anim.plot([], [], [], 'b-', linewidth=2, label='Trajectory')
 point, = ax_anim.plot([], [], [], 'ro', markersize=8, label='Current position')
 
+# Add text for time counter
+time_text = ax_anim.text2D(0.05, 0.90, '', transform=ax_anim.transAxes, 
+                          bbox=dict(boxstyle="round,pad=0.5", facecolor="white", alpha=0.9),
+                          fontsize=11, weight='bold', verticalalignment='top')
+
 def animate(frame):
     """
     Animation function called for each frame
@@ -160,8 +170,12 @@ def animate(frame):
     # Update current position point (red dot)
     if frame < len(t):
         point.set_data_3d([zeta_vals[frame]], [zeta_y_vals[frame]], [z[frame]])
+        
+        # Update time counter
+        current_time = t[frame]
+        time_text.set_text(f'Time: {current_time*1e12:.2f} ps\nFrame: {frame+1}/{len(t)}')
     
-    return line, point
+    return line, point, time_text
 
 # Create animation object
 # frames=len(t): number of animation frames

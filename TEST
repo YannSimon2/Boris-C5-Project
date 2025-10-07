@@ -1,0 +1,332 @@
+# Vay relativistic pusher algorithm for electron motion in plasma wakefield
+# This code uses the Vay algorithm to simulate the same plasma bubble as in the analytical code
+
+import numpy as np
+import matplotlib
+matplotlib.use('TkAgg')  # Set backend for plot display
+import matplotlib.pyplot as plt
+from scipy.constants import c, e, m_e, epsilon_0  # Physical constants
+from numba import jit
+from matplotlib.animation import FuncAnimation
+
+# === Physical Parameters (same as analytical code) ===
+# Plasma wave parameters
+v_p = 0.8*c                                    # Phase velocity of plasma wave (80% speed of light)
+beta_p = v_p/c                                 # Normalized phase velocity
+gamma_p = 1/np.sqrt(1-beta_p**2)              # Lorentz factor of plasma wave
+
+# Bubble and particle parameters
+r_b = 200e-6                                  # Bubble radius in meters (200 microns)
+a_0 = 2                                       # Normalized vector potential (laser strength)
+ksi_i = -r_b                                  # Initial longitudinal offset in meters
+k_p = 2*np.sqrt(a_0)/r_b                     # Plasma wavenumber
+t_d = -2*gamma_p**2*ksi_i/c                  # Dephasing time scale
+
+# Plasma parameters
+n_0 = 5e24                                    # Plasma density in m^-3 (very high density)
+omega_p = np.sqrt(n_0*(e**2)/(m_e*epsilon_0)) # Plasma frequency
+
+# === Simulation Parameters ===
+# Time parameters
+T_max = 2*t_d                                # Maximum simulation time
+N_steps = 10000                              # Number of time steps
+dt = T_max / N_steps                         # Time step
+t = np.linspace(0, T_max, N_steps)           # Time array
+
+# Initial conditions for electron
+x0 = 0.0                                     # Initial x position (m)
+y0 = 50e-6                                   # Initial y position (m) - offset from center
+z0 = ksi_i                                   # Initial z position (m) - initial longitudinal offset
+vx0 = 0.0                                    # Initial x velocity (m/s)
+vy0 = 0.0                                    # Initial y velocity (m/s)
+vz0 = 0.9*c                                  # Initial z velocity (m/s) - relativistic
+
+# Particle properties
+q = -e                                       # Electron charge
+m = m_e                                      # Electron mass
+
+# === Field Definitions ===
+
+@jit(nopython=True)
+def plasma_fields(x, y, z, t):
+    """
+    Calculate electric and magnetic fields in the plasma wakefield bubble
+    Based on the analytical model parameters
+    """
+    # Radial distance from bubble center with small epsilon to avoid division by zero
+    r_perp = np.sqrt(x**2 + y**2)
+    eps = 1e-12  # Small number to avoid division by zero
+    
+    # Normalized coordinates
+    xi = z - v_p * t                         # Co-moving coordinate
+    r_norm = r_perp / r_b                    # Normalized radial coordinate
+    
+    # Electric fields (focusing and accelerating)
+    if r_norm < 1.0:  # Inside the bubble
+        # Transverse focusing field (linear in r)
+        E_r = -omega_p**2 * m_e * c / (2 * e) * r_norm * r_b
+        
+        # Handle singularity at center properly
+        if r_perp > eps:
+            E_x = E_r * x / r_perp
+            E_y = E_r * y / r_perp
+        else:
+            # At center, use linear approximation
+            E_x = -omega_p**2 * m_e * c / (2 * e) * x / r_b
+            E_y = -omega_p**2 * m_e * c / (2 * e) * y / r_b
+        
+        # Longitudinal accelerating field
+        E_z = omega_p**2 * m_e * c / e * (1 - r_norm**2) * np.cos(k_p * xi)
+    else:  # Outside the bubble
+        E_x = E_y = E_z = 0.0
+    
+    # Magnetic fields (azimuthal in wakefield)
+    if r_norm < 1.0:  # Inside the bubble
+        B_phi = omega_p * m_e / e * r_norm * np.sin(k_p * xi)
+        
+        # Handle singularity at center properly
+        if r_perp > eps:
+            B_x = -B_phi * y / r_perp
+            B_y = B_phi * x / r_perp
+        else:
+            # At center, magnetic field is zero
+            B_x = 0.0
+            B_y = 0.0
+        B_z = 0.0
+    else:  # Outside the bubble
+        B_x = B_y = B_z = 0.0
+    
+    # Return field arrays
+    E = np.array([E_x, E_y, E_z])
+    B = np.array([B_x, B_y, B_z])
+    
+    return E, B
+
+@jit(nopython=True)
+def vay_push(r, v, q, m, dt, t):
+    """
+    Vay relativistic particle pusher algorithm
+    More stable than Boris pusher for highly relativistic particles
+    """
+    # Get current fields
+    E, B = plasma_fields(r[0], r[1], r[2], t)
+    
+    # Current relativistic factor
+    v_mag_sq = np.dot(v, v)
+    if v_mag_sq >= c**2:
+        v_mag_sq = 0.999 * c**2  # Prevent superluminal speeds
+    gamma = 1.0 / np.sqrt(1.0 - v_mag_sq / c**2)
+    
+    # Half electric field push
+    u_minus = gamma * v + (q * dt / (2 * m)) * E
+    
+    # Magnetic rotation parameters
+    t_vec = (q * dt / (2 * m)) * B
+    t_mag = np.sqrt(np.dot(t_vec, t_vec))
+    
+    # Vay algorithm for magnetic rotation
+    if t_mag > 1e-15:  # Only do magnetic rotation if field is significant
+        u_prime = u_minus + np.cross(u_minus, t_vec)
+        gamma_prime = np.sqrt(1.0 + np.dot(u_prime, u_prime) / c**2)
+        sigma = gamma_prime**2 - t_mag**2
+        
+        # Ensure sigma is positive for stability
+        if sigma > 0:
+            gamma_new = np.sqrt((sigma + np.sqrt(sigma**2 + 4*(t_mag**2 + np.dot(u_prime, t_vec)**2))) / 2)
+        else:
+            gamma_new = gamma_prime
+        
+        if gamma_new > 1e-15:  # Avoid division by very small numbers
+            t_new = t_vec / gamma_new
+            t_new_mag_sq = np.dot(t_new, t_new)
+            
+            if t_new_mag_sq < 1.0:  # Ensure stability
+                s = t_new / (1.0 + np.sqrt(1.0 + t_new_mag_sq))
+                u_plus = (u_minus + np.dot(u_minus, t_new) * t_new + np.cross(u_minus, s)) / (1.0 + t_new_mag_sq)
+            else:
+                u_plus = u_minus
+        else:
+            u_plus = u_minus
+    else:
+        u_plus = u_minus
+    
+    # Second half electric field push
+    u_new = u_plus + (q * dt / (2 * m)) * E
+    gamma_final = np.sqrt(1.0 + np.dot(u_new, u_new) / c**2)
+    
+    # New velocity with speed limit
+    v_new = u_new / gamma_final
+    v_new_mag_sq = np.dot(v_new, v_new)
+    if v_new_mag_sq >= c**2:
+        v_new = v_new * 0.999 * c / np.sqrt(v_new_mag_sq)
+        gamma_final = 1.0 / np.sqrt(1.0 - 0.999**2)
+    
+    # Update position
+    r_new = r + v_new * dt
+    
+    return r_new, v_new, gamma_final
+
+# === Simulation ===
+print("Starting Vay pusher simulation...")
+print(f"Plasma frequency: {omega_p:.2e} rad/s")
+print(f"Bubble radius: {r_b*1e6:.1f} μm")
+print(f"Simulation time: {T_max*1e12:.1f} ps")
+print(f"Time step: {dt*1e15:.2f} fs")
+
+# Initialize arrays for storing results
+positions = np.zeros((N_steps, 3))
+velocities = np.zeros((N_steps, 3))
+gammas = np.zeros(N_steps)
+times = np.zeros(N_steps)
+
+# Initial conditions
+r = np.array([x0, y0, z0])
+v = np.array([vx0, vy0, vz0])
+gamma = 1.0 / np.sqrt(1.0 - np.dot(v, v) / c**2)
+
+# Store initial values
+positions[0] = r
+velocities[0] = v
+gammas[0] = gamma
+times[0] = 0.0
+
+# Main simulation loop
+for i in range(1, N_steps):
+    r, v, gamma = vay_push(r, v, q, m, dt, t[i])
+    
+    positions[i] = r
+    velocities[i] = v
+    gammas[i] = gamma
+    times[i] = t[i]
+    
+    # Progress indicator
+    if i % (N_steps // 10) == 0:
+        print(f"Progress: {i/N_steps*100:.0f}%")
+
+print("Simulation completed!")
+
+# === Results Analysis ===
+# Extract trajectory components
+x_traj = positions[:, 0]
+y_traj = positions[:, 1]
+z_traj = positions[:, 2]
+
+# Calculate energies
+kinetic_energy = (gammas - 1) * m * c**2 / e  # in eV
+total_energy = gammas * m * c**2 / e
+
+print(f"\nTrajectory Analysis:")
+print(f"Initial gamma: {gammas[0]:.2f}")
+print(f"Final gamma: {gammas[-1]:.2f}")
+print(f"Max gamma: {np.max(gammas):.2f}")
+print(f"Max transverse displacement: {np.max(np.sqrt(x_traj**2 + y_traj**2))*1e6:.1f} μm")
+print(f"Longitudinal travel: {(z_traj[-1] - z_traj[0])*1e3:.2f} mm")
+
+# === Plotting ===
+
+# 2D trajectory plots
+plt.figure(figsize=(15, 10))
+
+# Transverse motion (x-y plane)
+plt.subplot(2, 3, 1)
+plt.plot(x_traj*1e6, y_traj*1e6, 'b-', linewidth=1)
+plt.scatter(x_traj[0]*1e6, y_traj[0]*1e6, color='green', s=50, label='Start', zorder=5)
+plt.scatter(x_traj[-1]*1e6, y_traj[-1]*1e6, color='red', s=50, label='End', zorder=5)
+plt.xlabel('x (μm)')
+plt.ylabel('y (μm)')
+plt.title('Transverse Motion (x-y plane)')
+plt.grid(True)
+plt.legend()
+plt.axis('equal')
+
+# x vs time
+plt.subplot(2, 3, 2)
+plt.plot(times*1e12, x_traj*1e6, 'b-', linewidth=1)
+plt.xlabel('Time (ps)')
+plt.ylabel('x (μm)')
+plt.title('X Position vs Time')
+plt.grid(True)
+
+# y vs time
+plt.subplot(2, 3, 3)
+plt.plot(times*1e12, y_traj*1e6, 'r-', linewidth=1)
+plt.xlabel('Time (ps)')
+plt.ylabel('y (μm)')
+plt.title('Y Position vs Time')
+plt.grid(True)
+
+# Energy evolution
+plt.subplot(2, 3, 4)
+plt.plot(times*1e12, gammas, 'g-', linewidth=2)
+plt.xlabel('Time (ps)')
+plt.ylabel('γ (Lorentz factor)')
+plt.title('Energy Evolution')
+plt.grid(True)
+
+# Longitudinal motion
+plt.subplot(2, 3, 5)
+plt.plot(times*1e12, (z_traj - z_traj[0])*1e3, 'm-', linewidth=1)
+plt.xlabel('Time (ps)')
+plt.ylabel('Δz (mm)')
+plt.title('Longitudinal Displacement')
+plt.grid(True)
+
+# Phase space (x vs vx)
+plt.subplot(2, 3, 6)
+vx_traj = velocities[:, 0]
+plt.plot(x_traj*1e6, vx_traj/c, 'c-', linewidth=1)
+plt.xlabel('x (μm)')
+plt.ylabel('vx/c')
+plt.title('Phase Space (x-vx)')
+plt.grid(True)
+
+plt.tight_layout()
+plt.show(block=True)
+
+# 3D trajectory plot
+fig = plt.figure(figsize=(12, 9))
+ax = fig.add_subplot(111, projection='3d')
+
+# Plot trajectory
+ax.plot(x_traj*1e6, y_traj*1e6, (z_traj - z_traj[0])*1e3, 'b-', linewidth=2, label='Electron path')
+ax.scatter(x_traj[0]*1e6, y_traj[0]*1e6, 0, color='green', s=100, label='Start')
+ax.scatter(x_traj[-1]*1e6, y_traj[-1]*1e6, (z_traj[-1] - z_traj[0])*1e3, color='red', s=100, label='End')
+
+# Draw bubble boundary (cylinder)
+theta = np.linspace(0, 2*np.pi, 50)
+z_bubble = np.linspace(-r_b*1e6, r_b*1e6, 20)
+theta_mesh, z_mesh = np.meshgrid(theta, z_bubble)
+x_bubble = r_b*1e6 * np.cos(theta_mesh)
+y_bubble = r_b*1e6 * np.sin(theta_mesh)
+ax.plot_surface(x_bubble, y_bubble, z_mesh*1e-3, alpha=0.2, color='gray', label='Bubble boundary')
+
+ax.set_xlabel('x (μm)')
+ax.set_ylabel('y (μm)')
+ax.set_zlabel('Δz (mm)')
+ax.set_title('3D Electron Trajectory in Plasma Wakefield\n(Vay Pusher Algorithm)')
+ax.legend()
+
+plt.show(block=True)
+
+# Compare oscillation frequency with analytical prediction
+# Calculate transverse oscillation frequency
+r_perp = np.sqrt(x_traj**2 + y_traj**2)
+oscillation_period_indices = []
+
+# Find peaks in transverse motion to estimate frequency
+from scipy.signal import find_peaks
+peaks, _ = find_peaks(r_perp, height=np.max(r_perp)*0.5)
+
+if len(peaks) > 1:
+    avg_period = np.mean(np.diff(times[peaks]))
+    measured_freq = 1.0 / avg_period
+    theoretical_freq = omega_p / (2*np.pi * np.sqrt(2*np.mean(gammas)))
+    
+    print(f"\nOscillation Analysis:")
+    print(f"Measured betatron frequency: {measured_freq:.2e} Hz")
+    print(f"Theoretical frequency: {theoretical_freq:.2e} Hz")
+    print(f"Frequency ratio (measured/theoretical): {measured_freq/theoretical_freq:.2f}")
+else:
+    print("\nNot enough oscillations detected for frequency analysis")
+
+print(f"\nSimulation completed successfully!")
