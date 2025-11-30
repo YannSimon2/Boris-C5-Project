@@ -84,12 +84,10 @@ c = cst.c
 q = -cst.e             # electron charge (negative)
 m = cst.electron_mass
 a0=5
-A0=-m*c*a0/q
 # n = 5e24
 wp=np.sqrt(q**2*5e24/(m*cst.epsilon_0))
-w=wp/a0
 vp=0.99*c
-E0 = cst.electron_mass * wp * c /q 
+E0 = -cst.electron_mass * wp * c /q 
 
 kp=wp/c
 w0 = 2.0 * np.sqrt(a0) / kp
@@ -98,7 +96,7 @@ xi_0 = -w0
 gamma_p = 1.0 / np.sqrt(1 - vp**2 / c**2)
 
 td = 2.0 * gamma_p**2 * w0 / c
-tf = td / 2.0
+tf = td
 ti = td / 1000.0
 dt = td / 2000.0
 
@@ -108,9 +106,7 @@ steps = len(T)
 
 # initial momentum: choose initial gamma slightly >1 (avoid invalid sqrt)
 initial_gamma = 100*gamma_p
-print(gamma_p,initial_gamma)
 pz0 = m*c*np.sqrt(initial_gamma**2 - 1)
-print(pz0)
 p = np.array([0, 0.0, pz0])   # initial momentum (px,py,pz)
 x = np.array([-xi_0/4, 0.0, xi_0])  # position
 # storage arrays
@@ -178,3 +174,4 @@ print(gamma_store[0],p_tot[0])
 print("Final gamma:", gamma_store[-1])
 print("Final momentum:", p_tot[-1])
 print("Final position:", trajectory[-1])
+
