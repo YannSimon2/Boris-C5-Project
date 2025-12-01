@@ -3,6 +3,10 @@ import matplotlib.gridspec as gridspec
 import numpy as np
 import scipy.constants as const
 
+from math import sqrt, asinh
+
+c = cst.c  # speed of light (m/s)
+
 #------------------------------------ Plotting functions --------------------------------#
 
 def comparaison(L_t, L_r, L_analytic, relativistic = False, save=False):
@@ -154,12 +158,12 @@ def plot_energy(L_t, L_v, m, c = const.c, relativistic = False, save=False):
 #------------------------------------ Relativistic Electron ----------------------------------#
 
 # ---------- Relativistic Boris with Leapfrog using classical gamma expression ----------
-def RelativisticBorisPusher(r0, v0, E, B, dt, q, m, c=const.c):
+def RelativisticBorisPusher(t_array,r0, v0, E, B, dt, q, m, c=const.c):
     gamma_0 = 1.0 / np.sqrt(1.0 - (np.linalg.norm(v0)/c)**2)
     L_u = [v0 * gamma_0]
     L_v = [v0]
     L_r = [r0]
-    for i in range(1, len(L_t)):  # Changé de np.shape(L_t)[0] à len(L_t)
+    for i in range(1, len(t_array)):  # Changé de np.shape(L_t)[0] à len(L_t)
         L_r.append(L_r[i-1] + L_v[i-1] * dt)
         
         u_onehalf = L_u[i-1] + q * dt / (2 * m) * (E + np.cross(L_v[i-1], B))
@@ -182,83 +186,165 @@ def RelativisticBorisPusher(r0, v0, E, B, dt, q, m, c=const.c):
     
     return np.array(L_r), np.array(L_v)
 
-def non_relativistic_analytical_solution(L_t, r0, v0, q, m, B, E):
-    """ 
-    Solution analytique pour la vitesse d'une particule chargée non relativiste dans des champs E et B constants (Bz uniquement) en prenant en compte la dérive électrique.
-    Retourne un array de vitesses à chaque pas de temps."""
-
-    v_drift = np.cross(E, B) / np.linalg.norm(B)**2
-    omega = np.abs(q) * np.linalg.norm(B) / m
-    v_analytical = []
-    r_analytical = [r0]
-    for t in L_t:
-        vx_t = (v0[0] - v_drift[0]) * np.cos(omega*t) + np.sign(q) * (v0[1] - v_drift[1]) * np.sin(omega*t) + v_drift[0]
-        vy_t = (v0[1] - v_drift[1]) * np.cos(omega*t) - np.sign(q) * (v0[0] - v_drift[0]) * np.sin(omega*t) + v_drift[1]
-        vz_t = v0[2] + q * E[2] / m * t
-        v_analytical.append(np.array([vx_t, vy_t, vz_t]))
-    v_analytical = np.array(v_analytical)
-    for i in range(1,np.shape(L_t)[0]):
-        r_analytical.append(r_analytical[i-1] + v_analytical[i-1]*dt)
-    r_analytical = np.array(r_analytical)
-    return r_analytical
-
-def relativistic_analytical_solution(L_t, r0, v0, q, m, B, E, c=const.c):
+def particle_position_lab(t_lab_array, m, q, E_mag, B_mag, v0_y,
+                          tol=1e-9, max_bisect_iter=80):
     """
-    Solution analytique pour la vitesse d'une particule chargée relativiste dans des champs E et B constants (Bz uniquement).
-    Retourne un array de vitesses à chaque pas de temps.
+    Compute (x,y,z) positions in the lab frame for a charged relativistic particle
+    in uniform fields E=(E_mag,0,0) and B=(0,0,B_mag), initial lab velocity v0=(0,v0_y,0).
+    The algorithm:
+      1. compute drift velocity u = c * (E x B) / E^2  (here u is along ±y)
+      2. boost to K'' moving with u, solve motion there (analytic integrals)
+      3. inverse-Lorentz transform back; for each lab time t_lab solve implicitly
+         for t' using bisection on t_lab - gamma_u*(t' + u*y'(t')/c^2) = 0
+
+    Parameters
+    ----------
+    t_lab_array : array_like
+        Lab times (s) at which to compute the particle position (must be >= 0).
+    m : float
+        Particle rest mass (kg).
+    q : float
+        Particle charge (C).
+    E_mag : float
+        Magnitude of E-field (V/m) along +x.
+    B_mag : float
+        Magnitude of B-field (T) along +z.
+    v0_y : float
+        Initial lab y-velocity (m/s).
+    tol : float
+        Tolerance for bisection in seconds.
+    max_bisect_iter : int
+        Max iterations for bisection.
+
+    Returns
+    -------
+    positions : ndarray, shape (N,3)
+        x,y,z positions in lab frame for each requested lab time.
+    times_out : ndarray
+        The input t_lab_array as a numpy array (sorted to match outputs).
+
+    Notes
+    -----
+    - The code assumes E_mag > B_mag for a physical drift speed u < c.
+    - Units must be SI.
     """
-    u = np.cross(E, B) / np.linalg.norm(E)**2 * c**2
-    E_prime = E * np.sqrt((np.dot(E,E) - np.dot(B,B)*c**2)/np.dot(E,E))
+    t_lab_array = np.asarray(t_lab_array, dtype=float)
+    if np.any(t_lab_array < 0):
+        raise ValueError("All requested lab times must be non-negative.")
+    if E_mag == 0.0:
+        raise ValueError("E_mag must be nonzero for the transformation used here.")
+    # Drift velocity (vector): u = c * (E x B) / E^2
+    # for E=(E,0,0), B=(0,0,B) => E x B = (0, -E*B, 0) => u = (0, -c*B/E, 0)
+    u_y = -c * (B_mag / E_mag)
+    u = np.array([0.0, u_y, 0.0])
+    u_mag = abs(u_y)
+    if u_mag >= c:
+        raise ValueError("Drift speed |u| >= c (requires E_mag > B_mag).")
 
-    gamma = 1.0 / np.sqrt(1.0 - (np.linalg.norm(u)/c)**2)
-    L_tprime = [L_t[0]]
-    for i in range(1, np.shape(L_t)[0]):
-        L_tprime.append((L_t[i] - L_t[i-1]) / gamma + L_tprime[i-1]) # Transformation de Lorentz du temps
-    L_tprime = np.array(L_tprime)
+    gamma_u = 1.0 / sqrt(1.0 - (u_mag / c)**2)
 
-    v0_prime = np.zeros_like(v0)
-    v0_prime[0] = v0[0] / gamma / (1 - np.dot(v0, u)/c**2)
-    v0_prime[1] = (v0[1] - u[1]) / (1 - np.dot(v0, u)/c**2)  # Transformation de Lorentz de la vitesse
-    v0_prime[2] = v0[2] / gamma / (1 - np.dot(v0, u)/c**2)
-    gamma0_prime = 1.0 / np.sqrt(1.0 - (np.linalg.norm(v0_prime)/c)**2)
-    p_prime = [m * v0_prime * gamma0_prime]
-    for i,t in enumerate(L_tprime[1:]):
-        p_prime.append(q * E_prime * t + p_prime[0])  # Impulsion dans le référentiel primé
-    p_prime = np.array(p_prime)
+    # Transform initial particle velocity v0 (lab) to K'' (boost along y)
+    # velocity-transform: v'_|| = (v|| - u) / (1 - v·u / c^2)
+    # here v0 = (0, v0_y, 0) and u = (0, u_y, 0)
+    denom = 1.0 - (v0_y * u_y) / (c**2)
+    v_y_prime_0 = (v0_y - u_y) / denom
+    # initial v_x' = 0 because v_x_lab = 0 and perpendicular velocity transform factor multiplies zero
+    v_x_prime_0 = 0.0
+    # initial gamma in K''
+    gamma0_prime = 1.0 / sqrt(1.0 - (v_y_prime_0**2 + v_x_prime_0**2) / c**2)
+    # conserved transverse momentum in K'': p_y = m * gamma0' * v_y'
+    p_y = m * gamma0_prime * v_y_prime_0
 
-    gamma_prime = np.sqrt(1.0 + (np.linalg.norm(p_prime, axis=1)/(m*c))**2)
-    v_prime = p_prime / (m * gamma_prime[:, np.newaxis])  # Vitesse dans le référentiel primé
-    v = np.zeros_like(v_prime)
-    v[:,0] = v_prime[:,0] / gamma / (1 + np.dot(v_prime, u)/c**2)
-    v[:,1] = (v_prime[:,1] + u[1]) / (1 + np.dot(v_prime, u)/c**2)  # Transformation de Lorentz inverse de la vitesse
-    v[:,2] = v_prime[:,2] / gamma / (1 + np.dot(v_prime, u)/c**2)
+    # Electric field in K'': E' = E / gamma_u  (from the document)
+    E_prime = E_mag / gamma_u
+    qEprime = q * E_prime
 
-    r_analytical = []
-    for i in range(len(L_t)):
-        x = r0[0] + v[i,0]*L_t[i]
-        y = r0[1] + v[i,1]*L_t[i]
-        z = r0[2] + v[i,2]*L_t[i]
-        r_analytical.append(np.array([x, y, z]))
-    r_analytical = np.array(r_analytical)
-    return r_analytical, v
+    # helper dimensionless constant for compact formulas
+    def P_const():
+        return p_y / (m * c)  # dimensionless p_y/(m c)
 
-#Initial conditions and simulation parameters for non-relativistic case
-t0, tf, dt = 0, 1e-9, 1e-14
-r0 = np.array([1, 1, 1])
-v0 = np.array([1e3, 1e3, 0.0])  # Initial velocity corresponding to low energy (1 keV)
-q, m = -const.e, const.m_e
-E_field = np.array([0, 0.0, 0.0])  # No electric field
-B_field = np.array([0.0, 0.0, 0.5*1e-6])    # Magnetic field in z direction 
+    P = P_const()
 
-# Run Non-Relativistic Boris pusher with leapfrog integration
-L_t = np.arange(t0, tf, dt)
+    # x'(t') and y'(t') in K'', derived analytically (starting at origin at t'=0)
+    # define S(t') = p_x/(m c) = (q E' t')/(m c)
+    def S_of_tprime(tprime):
+        return (qEprime * tprime) / (m * c)
 
-L_r, L_v = RelativisticBorisPusher(r0, v0, E_field, B_field, dt, q, m)
-L_r_analytic = non_relativistic_analytical_solution(L_t, r0, v0, q, m, B_field, E_field)
-# Plot results for non-relativistic case
-comparaison(L_t, L_r, L_r_analytic, False, True)
-plot_energy(L_t, L_v,m,const.c,False,True)
+    def gamma_total_from_S(S):
+        return sqrt(1.0 + P**2 + S**2)
 
+    def x_prime_of_tprime(tprime):
+        S = S_of_tprime(tprime)
+        pref = (m * c**2) / qEprime
+        return pref * (gamma_total_from_S(S) - sqrt(1.0 + P**2))
+
+    def y_prime_of_tprime(tprime):
+        S = S_of_tprime(tprime)
+        # y' = (p_y c / qE') * asinh( S / sqrt(1+P^2) )
+        pref = (p_y * c) / qEprime
+        denom_sqrt = sqrt(1.0 + P**2)
+        return pref * asinh(S / denom_sqrt)
+
+    # inverse transform to lab from K'':
+    # boost inverse (K'' -> lab) for boost velocity u along +y:
+    # x_lab = x'
+    # y_lab = gamma_u * (y' + u * t')
+    # t_lab = gamma_u * (t' + u * y' / c^2)
+    def lab_coords_from_tprime(tprime):
+        x_p = x_prime_of_tprime(tprime)
+        y_p = y_prime_of_tprime(tprime)
+        x_lab = x_p
+        y_lab = gamma_u * (y_p + u_y * tprime)
+        # t_lab returned for root-finding
+        t_lab_calc = gamma_u * (tprime + (u_y * y_p) / (c**2))
+        return x_lab, y_lab, t_lab_calc
+
+    # For each desired t_lab, find t' s.t. t_lab_calc(t') = t_lab via bisection
+    def find_tprime_for_tlab(tlab):
+        # f(t') = t_lab_calc(t') - tlab; f(0) = -tlab (since t_lab_calc(0)=0)
+        f0 = -tlab
+        if abs(f0) < tol:
+            return 0.0
+        # find an upper bound t_hi so that f(t_hi) > 0
+        t_hi = max(1e-12, tlab / max(1e-12, gamma_u))  # crude initial guess
+        # ensure positive f at t_hi by expanding until sign change
+        f_hi = lab_coords_from_tprime(t_hi)[2] - tlab
+        n_expand = 0
+        while f_hi <= 0 and n_expand < 200:
+            t_hi *= 2.0
+            f_hi = lab_coords_from_tprime(t_hi)[2] - tlab
+            n_expand += 1
+        if f_hi <= 0:
+            raise RuntimeError("Failed to bracket root for t_lab = {} (try larger max expansion)".format(tlab))
+
+        # bisection
+        t_lo = 0.0
+        f_lo = f0
+        iter_count = 0
+        while iter_count < max_bisect_iter:
+            t_mid = 0.5 * (t_lo + t_hi)
+            f_mid = lab_coords_from_tprime(t_mid)[2] - tlab
+            if abs(f_mid) < tol:
+                return t_mid
+            # choose half-interval
+            if f_mid > 0:
+                t_hi, f_hi = t_mid, f_mid
+            else:
+                t_lo, f_lo = t_mid, f_mid
+            iter_count += 1
+        # last resort return midpoint
+        return 0.5 * (t_lo + t_hi)
+
+    # compute positions for every requested lab time
+    positions = np.zeros((t_lab_array.size, 3), dtype=float)
+    for i, tl in enumerate(t_lab_array):
+        tprime = find_tprime_for_tlab(tl)
+        x_lab, y_lab, _ = lab_coords_from_tprime(tprime)
+        positions[i, 0] = x_lab
+        positions[i, 1] = y_lab
+        positions[i, 2] = 0.0
+
+    return positions, t_lab_array
 # Initial conditions and simulation parameters for relativistic case
 t0, tf, dt = 0, 1e-9, 1e-14
 r0 = np.array([1, 1, 1])
@@ -270,8 +356,9 @@ B_field = np.array([0.0, 0.0, 0.5*1e2])    # Magnetic field in z direction
 # Run Relativistic Boris pusher with leapfrog integration
 L_t = np.arange(t0, tf, dt)
 
-L_r, L_v = RelativisticBorisPusher(r0, v0, E_field, B_field, dt, q, m, light_speed)
-L_r_analytic, v_analytic = relativistic_analytical_solution(L_t, r0, v0, q, m, B_field, E_field, light_speed)
+L_r, L_v = RelativisticBorisPusher(L_t,r0, v0, E_field, B_field, dt, q, m, light_speed)
+L_r_analytic, v_analytic = particle_position_lab(L_t, m, q, E_field, B_field, v0,
+                          tol=1e-9, max_bisect_iter=80)
 
 # Plot results for relativistic case
 comparaison(L_t, L_r, L_r_analytic,True, True)
