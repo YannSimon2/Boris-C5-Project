@@ -160,3 +160,4 @@ print(gamma_store[0],p_tot[0])
 print("Final gamma:", gamma_store[-1])
 print("Final momentum:", p_tot[-1])
 print("Final position:", trajectory[-1])
+

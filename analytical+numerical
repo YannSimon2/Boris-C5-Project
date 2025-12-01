@@ -1,0 +1,485 @@
+"""
+Comparison of Analytical and Numerical Solutions for Electron Motion in Plasma Wakefield
+
+This code compares:
+1. Numerical solution using relativistic Boris pusher algorithm
+2. Analytical solution for betatron oscillations in plasma bubble regime
+
+All quantities are normalized to plasma units:
+- Time: ω_p^-1 (inverse plasma frequency)
+- Velocity: c (speed of light)
+- Length: c/ω_p (plasma skin depth)
+- Fields: E_norm = m_e c ω_p / e, B_norm = m_e ω_p / e
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import scipy.constants as cst
+from scipy.constants import c, e, m_e, epsilon_0
+from scipy.interpolate import interp1d
+import scipy.integrate as spi
+
+# ============================================================================
+# VECTOR HELPER FUNCTIONS
+# ============================================================================
+
+def vec_dot(A, B):
+    """
+    Compute dot product of vectors.
+    Works for 1D arrays or shape (N,3) arrays with last axis being components.
+    """
+    return np.sum(A * B, axis=-1)
+
+def vec_cross(A, B):
+    """Compute cross product of 3D vectors."""
+    return np.cross(A, B, axis=-1)
+
+# ============================================================================
+# RELATIVISTIC BORIS PUSHER ALGORITHM
+# ============================================================================
+
+def RelativisticBorisPusher(p, E, B, dt, q, m, c):
+    """
+    Relativistic Boris pusher for particle momentum update.
+    
+    This algorithm solves the relativistic equation of motion:
+    dp/dt = q(E + v × B)
+    
+    Parameters:
+    -----------
+    p : array (3,)
+        Momentum vector [px, py, pz] in SI units (kg⋅m/s)
+    E : array (3,)
+        Electric field vector [Ex, Ey, Ez] at particle position (V/m)
+    B : array (3,)
+        Magnetic field vector [Bx, By, Bz] at particle position (T)
+    dt : float
+        Time step (s)
+    q : float
+        Particle charge (C)
+    m : float
+        Particle mass (kg)
+    c : float
+        Speed of light (m/s)
+    
+    Returns:
+    --------
+    p_new : array (3,)
+        Updated momentum vector after time step dt
+    """
+    # Normalized momentum u = p/m
+    u = p / m
+    v, _ = momentum_to_velocity(p, m, c)
+    
+    # Half acceleration by E and B (implicit step)
+    u_minus = u + q * (E + vec_cross(v, B)) * dt / (2.0 * m)
+    u_prime = u_minus + q * dt * E / (2.0 * m)
+    u_prime2 = vec_dot(u_prime, u_prime)
+    
+    # Calculate intermediate Lorentz factor
+    gamma_prime = np.sqrt(1.0 + u_prime2 / c**2)
+    
+    # Rotation parameters
+    tau = q * B * dt / (2.0 * m)
+    tau2 = vec_dot(tau, tau)
+    sigma = gamma_prime**2 - tau2
+    u_ast = vec_dot(u_prime, tau) / c
+    u_ast2 = u_ast * u_ast
+    
+    # Lorentz factor after rotation
+    gamma_plus = np.sqrt((sigma + np.sqrt(sigma**2 + 4 * (tau2 - u_ast2))) / 2)
+    
+    # Rotation vector
+    t_vec = tau / gamma_plus
+    t_vec2 = vec_dot(t_vec, t_vec)
+    s_factor = 1.0 / (1.0 + t_vec2)
+    
+    # Final momentum after rotation
+    p_new = m * s_factor * (u_prime + vec_dot(u_prime, t_vec) * t_vec + vec_cross(u_prime, t_vec))
+    return p_new
+
+def momentum_to_velocity(p, m, c):
+    """
+    Convert relativistic momentum to velocity.
+    
+    Parameters:
+    -----------
+    p : array
+        Momentum (kg⋅m/s)
+    m : float
+        Particle mass (kg)
+    c : float
+        Speed of light (m/s)
+    
+    Returns:
+    --------
+    v : array
+        Velocity (m/s)
+    gamma : float
+        Lorentz factor
+    """
+    p_sq = vec_dot(p, p)
+    gamma = np.sqrt(1.0 + p_sq / (m**2 * c**2))
+    v = p / (gamma * m)
+    return v, gamma
+
+# ============================================================================
+# PLASMA BUBBLE FIELD MODEL
+# ============================================================================
+
+def bub(pos, t, vp):
+    """
+    Calculate electromagnetic fields in plasma bubble (blowout regime).
+    
+    In the bubble regime, ions are expelled creating a quasi-spherical cavity.
+    Fields are approximated as linear focusing forces in transverse direction
+    and longitudinal accelerating field.
+    
+    Parameters:
+    -----------
+    pos : array (3,)
+        Particle position [x, y, z] (m)
+    t : float
+        Time (s)
+    vp : float
+        Plasma wave phase velocity (m/s)
+    
+    Returns:
+    --------
+    E : array (3,)
+        Electric field [Ex, Ey, Ez] (V/m)
+    B : array (3,)
+        Magnetic field [Bx, By, Bz] (T)
+    """
+    x, y, z = pos
+    # Co-moving coordinate (distance behind plasma wave front)
+    xi = z - vp * t
+    
+    # Electric field components
+    # Transverse: focusing forces proportional to displacement
+    Ex = E0 * kp * x / 4.0
+    Ey = E0 * kp * y / 4.0
+    # Longitudinal: accelerating field
+    Ez = E0 * kp * xi / 2.0
+    
+    # Magnetic field (approximate, consistent with E/c scaling)
+    # Creates focusing force in combination with particle velocity
+    Bx = E0 * kp * y / (4 * cst.c)
+    By = -E0 * kp * x / (4 * cst.c)
+    Bz = 0.0
+    
+    E = np.array([Ex, Ey, Ez])
+    B = np.array([Bx, By, Bz])
+    return E, B
+
+
+# ============================================================================
+# PHYSICAL PARAMETERS (SI UNITS)
+# ============================================================================
+
+# Fundamental constants
+c = cst.c                          # Speed of light (m/s)
+q = -cst.e                         # Electron charge (C, negative)
+m = cst.electron_mass              # Electron mass (kg)
+
+# Plasma parameters
+n_0 = 5e24                         # Plasma electron density (m^-3)
+wp = np.sqrt(q**2 * n_0 / (m * cst.epsilon_0))  # Plasma frequency ω_p (rad/s)
+kp = wp / c                        # Plasma wavenumber k_p = ω_p/c (m^-1)
+
+# Laser and bubble parameters
+a_0 = 5                            # Normalized laser vector potential
+w0 = 2.0 * np.sqrt(a_0)           # Bubble radius parameter
+vp = 0.99 * c                      # Plasma wave phase velocity (99% of c)
+gamma_p = 1.0 / np.sqrt(1 - vp**2 / c**2)  # Lorentz factor of plasma wave
+
+# Field normalization
+E0 = -m * wp * c / q              # Characteristic electric field (V/m)
+
+# ============================================================================
+# NUMERICAL SIMULATION SETUP
+# ============================================================================
+
+# Initial position and time window
+xi_0 = -w0                         # Initial position in co-moving frame
+td = 2.0 * gamma_p**2 * w0 / c    # Dephasing time scale
+tf = td                            # Final time
+ti = td / 1000                     # Initial time (small fraction of td)
+dt = td / 3000.0                   # Time step
+
+# Build time array for numerical integration
+T = np.linspace(ti, tf, num=int((tf - ti) / dt) + 1)
+steps = len(T)
+
+# Initial conditions for numerical simulation
+initial_gamma = 100 * gamma_p     # Initial Lorentz factor
+pz0 = m * c * np.sqrt(initial_gamma**2 - 1)  # Initial longitudinal momentum
+p = np.array([0, 0.0, pz0])       # Initial momentum vector [px, py, pz]
+x = np.array([w0/4, 0.0, -w0])    # Initial position [x, y, z]
+
+print(f"Plasma wave Lorentz factor γ_p: {gamma_p:.2f}")
+print(f"Initial particle Lorentz factor γ_0: {initial_gamma:.2f}")
+print(f"Initial longitudinal momentum pz0: {pz0:.3e} kg⋅m/s")
+
+# Storage arrays for numerical results
+trajectory = np.zeros((steps, 3))  # Particle position [x, y, z] vs time
+p_tot = np.zeros((steps, 3))       # Momentum [px, py, pz] vs time
+gamma_store = np.zeros(steps)      # Total Lorentz factor vs time
+
+# ============================================================================
+# NUMERICAL INTEGRATION: BORIS PUSHER
+# ============================================================================
+
+for i, t in enumerate(T):
+    # Store current state
+    trajectory[i] = x
+    p_tot[i] = p
+    
+    # Calculate velocity and Lorentz factor
+    v, gamma = momentum_to_velocity(p, m, c)
+    gamma_store[i] = gamma
+    
+    # Get fields at current particle position
+    E, B = bub(x, t, vp)
+    
+    # Update momentum using Boris pusher
+    p = RelativisticBorisPusher(p, E, B, dt, q, m, c)
+    
+    # Update position using new velocity
+    v, _ = momentum_to_velocity(p, m, c)
+    x = x + v * dt
+
+print(f"\nNumerical simulation complete:")
+print(f"Final gamma: {gamma_store[-1]:.2f}")
+print(f"Final momentum: {p_tot[-1]}")
+print(f"Final position: {trajectory[-1]}")
+
+
+
+# ============================================================================
+# ANALYTICAL SOLUTION: BETATRON OSCILLATIONS IN PLASMA BUBBLE
+# ============================================================================
+
+# Analytical physical parameters (same as numerical)
+a_0_analytic = 5 
+v_p_analytic = 0.99                                         # Phase velocity (normalized to c)
+beta_p_analytic = v_p_analytic                              # β = v/c
+gamma_p_analytic = 1 / np.sqrt(1 - beta_p_analytic**2)    # Lorentz factor
+phi_analytic = np.pi/2 - 2 * gamma_p_analytic              # Phase parameter
+phiprime_analytic = 0                                       # Initial phase
+r_b_analytic = 2 * np.sqrt(a_0_analytic)                   # Bubble radius
+ksi_i_analytic = -r_b_analytic                              # Initial co-moving position
+
+# Dephasing parameters
+gamma_d_analytic = (gamma_p_analytic**2) * (ksi_i_analytic**2) / 2  # Dephasing energy scale
+t_d_analytic = -2 * gamma_p_analytic**2 * ksi_i_analytic           # Dephasing time
+zeta_i_analytic = r_b_analytic / 4                                  # Initial transverse position
+
+# Time array for analytical solution (normalized to ω_p^-1)
+t_ini_analytic = t_d_analytic / 1000                        # Start time
+t_analytic = np.linspace(t_ini_analytic, t_d_analytic, num=int((tf - ti) / dt) + 1)
+
+# ============================================================================
+# ANALYTICAL FUNCTION DEFINITIONS
+# ============================================================================
+
+def gamma_0_analytic(t):
+    """
+    Time-dependent longitudinal Lorentz factor.
+    
+    Models particle energy change due to dephasing with plasma wave.
+    Parabolic profile: γ₀(t) = γ_d(1 - τ²) where τ = (t - t_d)/t_d
+    
+    As the particle slips backward relative to the accelerating phase,
+    it experiences reduced acceleration, leading to energy saturation.
+    
+    Parameters:
+    -----------
+    t : float or array
+        Time (normalized to ω_p^-1)
+    
+    Returns:
+    --------
+    gamma_0 : float or array
+        Longitudinal Lorentz factor
+    """
+    tau = (t - t_d_analytic) / t_d_analytic   # Normalized time parameter
+    return gamma_d_analytic * (1 - tau**2)
+
+# Amplitude constant (determined by initial conditions)
+C_analytic = zeta_i_analytic * (gamma_0_analytic(t_ini_analytic))**(1/4) / np.cos(phiprime_analytic)
+
+def zeta_beta_analytic(t):
+    """
+    Amplitude of transverse betatron oscillation.
+    
+    Scales as γ₀^(-1/4) due to adiabatic invariant conservation.
+    As particle gains energy, oscillation amplitude decreases.
+    
+    Parameters:
+    -----------
+    t : float or array
+        Time (normalized to ω_p^-1)
+    
+    Returns:
+    --------
+    amplitude : float or array
+        Oscillation amplitude (normalized to k_p^-1)
+    """
+    return C_analytic * gamma_0_analytic(t)**(-1/4)
+
+def omega_beta_analytic(t):
+    """
+    Time-dependent betatron frequency.
+    
+    In the bubble regime, the transverse focusing force creates betatron
+    oscillations with frequency ω_β = ω_p / √(2γ₀).
+    
+    As particle energy increases, oscillation frequency decreases.
+    
+    Parameters:
+    -----------
+    t : float or array
+        Time (normalized to ω_p^-1)
+    
+    Returns:
+    --------
+    omega_beta : float or array
+        Betatron frequency (normalized to ω_p)
+    """
+    return 1 / np.sqrt(2 * gamma_0_analytic(t))
+
+def zeta_analytic(t):
+    """
+    Transverse position in x-direction (analytical solution).
+    
+    Solution: ζ(t) = A(t) cos(∫ω_β(t')dt' + φ₀)
+    where A(t) is the time-dependent amplitude.
+    
+    The integral of the time-varying frequency gives the accumulated phase.
+    
+    Parameters:
+    -----------
+    t : array
+        Time array (normalized to ω_p^-1)
+    
+    Returns:
+    --------
+    zeta : array
+        Transverse position (normalized to k_p^-1)
+    """
+    return np.array([
+        zeta_beta_analytic(t[i]) * np.cos(
+            spi.quad(omega_beta_analytic, 0, t[i])[0] + phiprime_analytic
+        ) 
+        for i in range(len(t))
+    ])
+
+def zeta_y_analytic(t):
+    """
+    Transverse position in y-direction (analytical solution).
+    
+    Currently set identical to x-direction. Could be modified with
+    different initial phase for elliptical motion.
+    """
+    return np.array([
+        zeta_beta_analytic(t[i]) * np.cos(
+            spi.quad(omega_beta_analytic, 0, t[i])[0] + phiprime_analytic
+        ) 
+        for i in range(len(t))
+    ])
+
+
+# ============================================================================
+# ANALYTICAL LONGITUDINAL MOTION
+# ============================================================================
+
+# Calculate longitudinal position evolution
+# Particle moves with relativistic velocity in z-direction
+z_analytic = np.zeros_like(t_analytic) + ksi_i_analytic - v_p_analytic * t_ini_analytic
+dt_analytic = t_analytic[1] - t_analytic[0]
+
+# Longitudinal velocity (approaching speed of light as energy increases)
+v_z_analytic = np.sqrt(1 - 1 / ((100 * gamma_p_analytic + gamma_0_analytic(t_analytic))**2))
+
+# Integrate position from velocity
+for i in range(1, len(t_analytic)):
+    z_analytic[i] = z_analytic[i-1] + v_z_analytic[i] * dt_analytic
+
+# Get transverse positions from analytical solution
+zeta_vals_analytic = zeta_analytic(t_analytic)  # x-direction oscillation
+
+# ============================================================================
+# PLOTTING: ANALYTICAL VS NUMERICAL COMPARISON
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Figure 1: Longitudinal Lorentz Factor Evolution
+# ---------------------------------------------------------------------------
+plt.figure(figsize=(8, 4))
+plt.plot(t_analytic, 100 * gamma_p_analytic + gamma_0_analytic(t_analytic))
+plt.xlabel(r'$\omega_p t$', fontsize=14)
+plt.ylabel(r'$\gamma_z(t)$', fontsize=14)
+plt.grid()
+plt.title('Longitudinal Lorentz Factor vs Time (analytical)', fontsize=16)
+plt.tight_layout()
+plt.show()
+
+# ---------------------------------------------------------------------------
+# Figure 2: Transverse Motion Comparison
+# ---------------------------------------------------------------------------
+plt.figure(figsize=(12, 5))
+zeta_vals_plot_analytic = zeta_analytic(t_analytic)
+
+# Left subplot: Trajectory comparison
+plt.subplot(1, 2, 1)
+plt.plot(t_analytic, zeta_vals_plot_analytic, label="Analytical", linestyle='dashed')
+plt.plot(T * c, trajectory[:, 0], label="Numerical (Boris)", linestyle='dotted', color='red')
+plt.xlabel(r'$\omega_p t$', fontsize=14)
+plt.ylabel(r'$k_p x$', fontsize=14)
+plt.legend(fontsize=12)
+plt.grid()
+plt.title('Transverse Motion in Wakefield', fontsize=14)
+
+# Right subplot: Relative error
+# Calculate percentage error (note: arrays may have different lengths)
+relative_error_x = 100 * np.abs(trajectory[:, 0] - zeta_analytic(t_analytic)) / (np.max(zeta_analytic(t_analytic)) + 1e-15)
+
+plt.subplot(1, 2, 2)
+plt.plot(T * c, relative_error_x)
+plt.xlabel(r'$\omega_p t$', fontsize=14)
+plt.ylabel('Relative Error (%)', fontsize=14)
+plt.grid()
+plt.title('Relative Error: Transverse Position', fontsize=14)
+
+plt.tight_layout()
+plt.show()
+
+# ---------------------------------------------------------------------------
+# Figure 3: Longitudinal Motion Comparison
+# ---------------------------------------------------------------------------
+plt.figure(figsize=(8, 6))
+
+# Top subplot: Longitudinal trajectory comparison
+plt.subplot(2, 1, 1)
+plt.plot(t_analytic, z_analytic, label="Analytical", linestyle='dashed')
+plt.plot(T * c, trajectory[:, 2], label="Numerical (Boris)", linestyle='dotted', color='red')
+plt.xlabel(r'$\omega_p t$', fontsize=14)
+plt.ylabel(r'$k_p z$', fontsize=14)
+plt.legend(fontsize=12)
+plt.grid()
+plt.title('Longitudinal Motion in Wakefield', fontsize=14)
+
+# Bottom subplot: Relative error in longitudinal position
+relative_error_z = 100 * np.abs(trajectory[:, 2] - z_analytic) / np.max(np.abs(z_analytic))
+
+plt.subplot(2, 1, 2)
+plt.plot(T * c, relative_error_z)
+plt.xlabel(r'$\omega_p t$', fontsize=14)
+plt.ylabel('Relative Error (%)', fontsize=14)
+plt.grid()
+plt.title('Relative Error: Longitudinal Position', fontsize=14)
+
+plt.tight_layout()
+plt.show()
+

@@ -12,64 +12,64 @@ import scipy.integrate as spi
 
 # === Physical Parameters ===
 # Plasma wave parameters
-a_0 = 5 
-v_p = 0.99                                    # Phase velocity of plasma wave (99% speed of light)
-beta_p = v_p                                 # Normalized phase velocity
-gamma_p = 1/np.sqrt(1-beta_p**2)              # Lorentz factor of plasma wave                                
-phi = np.pi/2 - 2*gamma_p                     # Phase parameter
-phiprime = 0 
-r_b = 2*np.sqrt(a_0)                                 # Bubble radius in meters (200 microns)
+a_0_analytic = 5 
+v_p_analytic = 0.99                                    # Phase velocity of plasma wave (99% speed of light)
+beta_p_analytic = v_p_analytic                                 # Normalized phase velocity
+gamma_p_analytic = 1/np.sqrt(1-beta_p_analytic**2)              # Lorentz factor of plasma wave                                
+phi_analytic = np.pi/2 - 2*gamma_p_analytic                     # Phase parameter
+phiprime_analytic = 0 
+r_b_analytic = 2*np.sqrt(a_0_analytic)                                 # Bubble radius in meters (200 microns)
                                       # Normalized vector potential (laser strength)
-ksi_i = -r_b                           # Initial position
+ksi_i_analytic = -r_b_analytic                           # Initial position
 
-gamma_d = (gamma_p**2)*(ksi_i**2)/2  
-t_d = -2*gamma_p**2*ksi_i                   # Dephasing time scale
-zeta_i = r_b/4
+gamma_d_analytic = (gamma_p_analytic**2)*(ksi_i_analytic**2)/2  
+t_d_analytic = -2*gamma_p_analytic**2*ksi_i_analytic                   # Dephasing time scale
+zeta_i_analytic = r_b_analytic/4
 
 
 # Time array for simulation (normalized)
-t_ini = t_d/1000                            # Start time (small fraction of dephasing time)
-t = np.linspace(t_ini,t_d,1000)         # Time from small fraction to half dephasing time
+t_ini_analytic = t_d_analytic/1000                            # Start time (small fraction of dephasing time)
+t_analytic = np.linspace(t_ini_analytic,t_d_analytic,1000)         # Time from small fraction to half dephasing time
 
 # === Function Definitions ===
 
-def gamma_0(t):
+def gamma_0_analytic(t):
     """
     Time-dependent Lorentz factor
     Models how particle energy changes due to dephasing with plasma wave
     """
-    tau = (t-t_d)/t_d                         # Normalized time parameter
-    return gamma_d*(1-tau**2)                 # Parabolic energy profile
+    tau = (t-t_d_analytic)/t_d_analytic                         # Normalized time parameter
+    return gamma_d_analytic*(1-tau**2)                 # Parabolic energy profile
 
-C = zeta_i*(gamma_0(t_ini))**(1/4)/np.cos(phiprime)                                      # Amplitude constant
+C_analytic = zeta_i_analytic*(gamma_0_analytic(t_ini_analytic))**(1/4)/np.cos(phiprime_analytic)                                      # Amplitude constant
 
-def zeta_beta(t):
+def zeta_beta_analytic(t):
     """
     Amplitude of transverse oscillation
     Depends on particle energy (weaker particles oscillate more)
     """
-    return C*gamma_0(t)**(-1/4)              # Amplitude scales as gamma^(-1/4)
+    return C_analytic*gamma_0_analytic(t)**(-1/4)              # Amplitude scales as gamma^(-1/4)
 
-def omega_beta(t):
+def omega_beta_analytic(t):
     """
     Time-dependent betatron frequency
     Frequency of transverse oscillations in the plasma bubble
     """
-    return 1/np.sqrt(2*gamma_0(t))     # Frequency depends on energy
+    return 1/np.sqrt(2*gamma_0_analytic(t))     # Frequency depends on energy
 
-def zeta(t):
+def zeta_analytic(t):
     """
     Transverse position in x-direction
     Calculated by integrating the oscillatory motion
     """
-    return np.array([zeta_beta(t[i])*np.cos(spi.quad(omega_beta,0,t[i])[0] + phiprime) for i in range(len(t))])
+    return np.array([zeta_beta_analytic(t[i])*np.cos(spi.quad(omega_beta_analytic,0,t[i])[0] + phiprime_analytic) for i in range(len(t))])
 
-def zeta_y(t):
+def zeta_y_analytic(t):
     """
     Transverse position in y-direction
     Currently identical to x-direction (could be modified for different phases)
     """
-    return np.array([zeta_beta(t[i])*np.cos(spi.quad(omega_beta,0,t[i])[0] + phiprime) for i in range(len(t))])
+    return np.array([zeta_beta_analytic(t[i])*np.cos(spi.quad(omega_beta_analytic,0,t[i])[0] + phiprime_analytic) for i in range(len(t))])
 # === 2D Plotting ===
 # Create subplots showing energy evolution and transverse motion
 
@@ -77,7 +77,7 @@ plt.figure(figsize=(8, 4))
 
 
 
-plt.plot(t, 100*gamma_p + gamma_0(t))
+plt.plot(t_analytic, 100*gamma_p_analytic + gamma_0_analytic(t_analytic))
 plt.xlabel(r'$\omega_p t$',fontsize=14)
 plt.ylabel(r'$\gamma_z(t)$',fontsize=14)
 plt.grid()
@@ -86,9 +86,9 @@ plt.tight_layout()
 plt.show()
 
 plt.figure(figsize=(8, 4))
-zeta_vals_plot = zeta(t)
+zeta_vals_plot_analytic = zeta_analytic(t_analytic)
 
-plt.plot(t, zeta_vals_plot)
+plt.plot(t_analytic, zeta_vals_plot_analytic)
 plt.xlabel(r'$\omega_p t$',fontsize=14)
 plt.ylabel(r'$k_p x$',fontsize=14)
 plt.grid()
@@ -100,86 +100,86 @@ plt.show()
 # === 3D Trajectory Calculation ===
 # Calculate longitudinal motion by integrating acceleration from energy changes
 
-fig = plt.figure(figsize=(10, 8))
-ax = fig.add_subplot(111, projection='3d')
+fig_analytic = plt.figure(figsize=(10, 8))
+ax_analytic = fig_analytic.add_subplot(111, projection='3d')
 
 # Calculate z position (longitudinal direction)
 # Assuming initial z=0 and integrating acceleration from gamma_0
-z = np.zeros_like(t) + ksi_i - v_p*t_ini                         # Initialize z positions
-dt = t[1] - t[0]                             # Time step
-v_z = np.sqrt(1-1/((100*gamma_p + gamma_0(t))**2))  # longitudinal velocity
+z_analytic = np.zeros_like(t_analytic) + ksi_i_analytic - v_p_analytic*t_ini_analytic                         # Initialize z positions
+dt_analytic = t_analytic[1] - t_analytic[0]                             # Time step
+v_z_analytic = np.sqrt(1-1/((100*gamma_p_analytic + gamma_0_analytic(t_analytic))**2))  # longitudinal velocity
 
-for i in range(1, len(t)):
+for i in range(1, len(t_analytic)):
                   # Update velocity
-    z[i] = z[i-1] + v_z[i] * dt               # Update position
+    z_analytic[i] = z_analytic[i-1] + v_z_analytic[i] * dt_analytic               # Update position
 
 # Get transverse positions
-zeta_vals = zeta(t)                         # x-direction transverse motion
-# zeta_y_vals = zeta_y(t)                     # y-direction transverse motion
-zeta_y_vals = np.zeros_like(zeta_vals)  # Set y-motion to zero for simplicity
+zeta_vals_analytic = zeta_analytic(t_analytic)                         # x-direction transverse motion
+# zeta_y_vals_analytic = zeta_y_analytic(t_analytic)                     # y-direction transverse motion
+zeta_y_vals_analytic = np.zeros_like(zeta_vals_analytic)  # Set y-motion to zero for simplicity
 
 
 
 # Plot 3D trajectory with normalized coordinates
-ax.plot(zeta_vals, zeta_y_vals, z, 'b-', linewidth=2, label='Particle path')
-ax.scatter(zeta_vals[0], zeta_y_vals[0], z[0], color='green', s=100, label='Start')
-ax.scatter(zeta_vals[-1], zeta_y_vals[-1], z[-1], color='red', s=100, label='End')
+ax_analytic.plot(zeta_vals_analytic, zeta_y_vals_analytic, z_analytic, 'b-', linewidth=2, label='Particle path')
+ax_analytic.scatter(zeta_vals_analytic[0], zeta_y_vals_analytic[0], z_analytic[0], color='green', s=100, label='Start')
+ax_analytic.scatter(zeta_vals_analytic[-1], zeta_y_vals_analytic[-1], z_analytic[-1], color='red', s=100, label='End')
 
-ax.set_xlabel(r'$k_px$')
-ax.set_ylabel(r'$k_py$')
-ax.set_zlabel(r'$k_pz$')
-ax.set_title('3D Particle Trajectory in Plasma Wakefield')
-ax.legend()
+ax_analytic.set_xlabel(r'$k_px$')
+ax_analytic.set_ylabel(r'$k_py$')
+ax_analytic.set_zlabel(r'$k_pz$')
+ax_analytic.set_title('3D Particle Trajectory in Plasma Wakefield')
+ax_analytic.legend()
 plt.show(block=True)
 
 # === Animated 3D Trajectory ===
 # Create real-time visualization of particle motion through the plasma
 
-fig_anim = plt.figure(figsize=(8, 6))
-ax_anim = fig_anim.add_subplot(111, projection='3d')
+fig_anim_analytic = plt.figure(figsize=(8, 6))
+ax_anim_analytic = fig_anim_analytic.add_subplot(111, projection='3d')
 
 # Set up the plot limits based on calculated trajectory (normalized)
-ax_anim.set_xlim([min(zeta_vals), max(zeta_vals)])
-ax_anim.set_ylim([min(zeta_y_vals), max(zeta_y_vals)])
-ax_anim.set_zlim([min(z), max(z)])
-ax_anim.set_xlabel(r'$k_px$')
-ax_anim.set_ylabel(r'$k_py$')
-ax_anim.set_zlabel(r'$k_pz$')
-ax_anim.set_title('Animated 3D Particle Trajectory in Plasma Wakefield')
+ax_anim_analytic.set_xlim([min(zeta_vals_analytic), max(zeta_vals_analytic)])
+ax_anim_analytic.set_ylim([min(zeta_y_vals_analytic), max(zeta_y_vals_analytic)])
+ax_anim_analytic.set_zlim([min(z_analytic), max(z_analytic)])
+ax_anim_analytic.set_xlabel(r'$k_px$')
+ax_anim_analytic.set_ylabel(r'$k_py$')
+ax_anim_analytic.set_zlabel(r'$k_pz$')
+ax_anim_analytic.set_title('Animated 3D Particle Trajectory in Plasma Wakefield')
 
 # Initialize empty line objects for animation
-line, = ax_anim.plot([], [], [], 'b-', linewidth=2, label='Trajectory')
-point, = ax_anim.plot([], [], [], 'ro', markersize=8, label='Current position')
+line_analytic, = ax_anim_analytic.plot([], [], [], 'b-', linewidth=2, label='Trajectory')
+point_analytic, = ax_anim_analytic.plot([], [], [], 'ro', markersize=8, label='Current position')
 
 # Add text for time counter
-time_text = ax_anim.text2D(0.05, 0.90, '', transform=ax_anim.transAxes, 
+time_text_analytic = ax_anim_analytic.text2D(0.05, 0.90, '', transform=ax_anim_analytic.transAxes, 
                           bbox=dict(boxstyle="round,pad=0.5", facecolor="white", alpha=0.9),
                           fontsize=11, weight='bold', verticalalignment='top')
 
-def animate(frame):
+def animate_analytic(frame):
     """
     Animation function called for each frame
     Updates the trajectory line and current position marker
     """
     # Update trajectory up to current frame (shows trail) - normalized coordinates
-    line.set_data_3d(zeta_vals[:frame+1], zeta_y_vals[:frame+1], z[:frame+1])
+    line_analytic.set_data_3d(zeta_vals_analytic[:frame+1], zeta_y_vals_analytic[:frame+1], z_analytic[:frame+1])
     
     # Update current position point (red dot)
-    if frame < len(t):
-        point.set_data_3d([zeta_vals[frame]], [zeta_y_vals[frame]], [z[frame]])
+    if frame < len(t_analytic):
+        point_analytic.set_data_3d([zeta_vals_analytic[frame]], [zeta_y_vals_analytic[frame]], [z_analytic[frame]])
         
         # Update time counter - show normalized time
-        current_time_norm = t[frame]
-        time_text.set_text(f'Time: {current_time_norm:.2f} s\nFrame: {frame+1}/{len(t)}')
+        current_time_norm_analytic = t_analytic[frame]
+        time_text_analytic.set_text(f'Time: {current_time_norm_analytic:.2f} s\nFrame: {frame+1}/{len(t_analytic)}')
     
-    return line, point, time_text
+    return line_analytic, point_analytic, time_text_analytic
 
 # Create animation object
-# frames=len(t): number of animation frames
+# frames=len(t_analytic): number of animation frames
 # interval=1: delay between frames in milliseconds (very fast)
 # blit=True: optimization for smoother animation
 # repeat=True: loop animation continuously
-anim = FuncAnimation(fig_anim, animate, frames=len(t), interval=1, blit=True, repeat=True)
+anim_analytic = FuncAnimation(fig_anim_analytic, animate_analytic, frames=len(t_analytic), interval=1, blit=True, repeat=True)
 
 plt.show(block=True)
 
