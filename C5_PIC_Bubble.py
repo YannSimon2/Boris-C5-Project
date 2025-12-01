@@ -35,26 +35,25 @@ def RelativisticBorisPusher(p, E, B, dt, q, m, c):
     q, m, c : scalars
     returns new momentum p_new (3,)
     """
-    # Half acceleration by E
-    p_minus = p + (q * E) * (dt / 2.0)
+    v,_=momentum_to_velocity(p,m,c)
+    p_minus = p + q * (E+vec_cross(v,B)) * dt / 2.0
+    p_prime=p_minus +q*dt*E/2.0
+    p_prime2 = vec_dot(p_prime, p_prime)
 
-    # compute gamma from p_minus
-    p_minus_sq = vec_dot(p_minus, p_minus)
-    gamma_minus = np.sqrt(1.0 + p_minus_sq / (m**2 * c**2))
+    gamma_prime = np.sqrt(1.0 + p_prime2 / (m**2 * c**2))
 
-    # rotation coefficients
-    t_vec = (q * B) * (dt / (2.0 * m * gamma_minus))
-    t_sq = vec_dot(t_vec, t_vec)
-    # p' = p_minus + p_minus x t
-    p_prime = p_minus + vec_cross(p_minus, t_vec)
-    # s factor
-    s_factor = 2.0 / (1.0 + t_sq)
-    # p_plus = p_minus + (p_prime x (s_factor * t_vec))
-    p_plus = p_minus + vec_cross(p_prime, t_vec * s_factor)
-
-    # final half-accel by E
-    p_new = p_plus + (q * E) * (dt / 2.0)
+    tau = q * B * dt / 2.0
+    tau2 = vec_dot(tau, tau)
+    sigma=gamma_prime**2-tau2
+    p_ast=vec_dot(p_prime,tau)/c
+    p_ast2=vec_dot(p_ast,p_ast)
+    gamma_plus=np.sqrt((sigma+np.sqrt(sigma**2+4*(tau2-p_ast2)))/2)
+    t_vec=tau/gamma_plus
+    t_vec2=vec_dot(t_vec,t_vec)
+    s_factor = 1.0 / (1.0 + t_vec2)
+    p_new=s_factor*(p_prime+vec_dot(p_prime,t_vec)*t_vec+vec_cross(p_prime,t_vec))
     return p_new
+
 
 def momentum_to_velocity(p, m, c):
     p_sq = vec_dot(p, p)
@@ -85,21 +84,19 @@ c = cst.c
 q = -cst.e             # electron charge (negative)
 m = cst.electron_mass
 a0=5
-A0=-m*c*a0/q
 # n = 5e24
 wp=np.sqrt(q**2*5e24/(m*cst.epsilon_0))
-w=wp/a0
 vp=0.99*c
-E0 = cst.electron_mass * wp * c /q 
+E0 = -cst.electron_mass * wp * c /q 
 
 kp=wp/c
-w0 = 2.0 * np.sqrt(A0) / kp
+w0 = 2.0 * np.sqrt(a0) / kp
 # initial z position and time window (kept from your code)
 xi_0 = -w0
 gamma_p = 1.0 / np.sqrt(1 - vp**2 / c**2)
 
 td = 2.0 * gamma_p**2 * w0 / c
-tf = 10*td / 2.0
+tf = td
 ti = td / 1000.0
 dt = td / 2000.0
 
@@ -109,23 +106,22 @@ steps = len(T)
 
 # initial momentum: choose initial gamma slightly >1 (avoid invalid sqrt)
 initial_gamma = 100*gamma_p
-print(gamma_p,initial_gamma)
-pz0 = m*c*np.sqrt(gamma_p**2 - 1)
-p = np.array([0, 0.0, 0])   # initial momentum (px,py,pz)
+pz0 = m*c*np.sqrt(initial_gamma**2 - 1)
+p = np.array([0, 0.0, pz0])   # initial momentum (px,py,pz)
 x = np.array([-xi_0/4, 0.0, xi_0])  # position
-
 # storage arrays
 trajectory = np.zeros((steps, 3))
 p_tot = np.zeros((steps, 3))
 gamma_store = np.zeros(steps)
 E_store = np.zeros((steps, 3))
-
+gamma_z=np.zeros(steps)
 for i, t in enumerate(T):
     trajectory[i] = x
     p_tot[i] = p
     v, gamma = momentum_to_velocity(p, m, c)
+    _,gammaz=momentum_to_velocity(p[2],m,c)
     gamma_store[i] = gamma
-
+    gamma_z[i]=gammaz
     # sample fields at particle position
     E, B = bub(x, t, vp)
     E_store[i] = E
@@ -145,12 +141,14 @@ axs[0,0].plot(T*wp, kp*trajectory[:, 0])
 axs[0,0].set_xlabel('t wp'); axs[0,0].set_ylabel('kp x'); axs[0,0].set_title('x vs time')
 axs[0,1].plot(T*wp, kp*trajectory[:, 2])
 axs[0,1].set_xlabel('t wp'); axs[0,1].set_ylabel('kp z'); axs[0,1].set_title('z vs time')
-axs[1,0].plot(T, p_tot[:, 0])
+axs[1,0].plot(T*wp, p_tot[:, 0])
 axs[1,0].set_xlabel('t (s)'); axs[1,0].set_ylabel('x (kg m/s)'); axs[1,0].set_title('px vs time')
-axs[1,1].plot(T, p_tot[:, 2])
+axs[1,1].plot(T*wp, p_tot[:, 2])
 axs[1,1].set_xlabel('t (s)'); axs[1,1].set_ylabel('pz (kg m/s)'); axs[1,1].set_title('pz vs time')
-axs[2,0].plot(T, gamma_store[:])
-axs[2,0].set_xlabel('t (s)'); axs[2,0].set_ylabel('gamma'); axs[2,0].set_title('gamma_x vs time')
+axs[2,0].plot(T*wp, gamma_store[:])
+axs[2,0].set_xlabel('t (s)'); axs[2,0].set_ylabel('gamma'); axs[2,0].set_title('gamma_p vs time')
+axs[2,1].plot(T*wp, gamma_z[:])
+axs[2,1].set_xlabel('t (s)'); axs[2,1].set_ylabel('gamma_z'); axs[2,1].set_title('gamma_z vs time')
 plt.tight_layout()
 plt.show()
 
@@ -172,7 +170,8 @@ ax.set_xlabel('t (s)'); ax.set_ylabel('E (V/m)'); ax.set_title('E-field at parti
 ax.legend()
 plt.tight_layout()
 plt.show()
-
+print(gamma_store[0],p_tot[0])
 print("Final gamma:", gamma_store[-1])
 print("Final momentum:", p_tot[-1])
 print("Final position:", trajectory[-1])
+
